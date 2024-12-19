@@ -17,7 +17,6 @@ sierra = true
 
 [scripts]
 test = "snforge test"
-
 # Visit https://foundry-rs.github.io/starknet-foundry/appendix/scarb-toml.html for more information
 
 # [tool.snforge]                                             # Define `snforge` tool section
