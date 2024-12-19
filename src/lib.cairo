@@ -1,5 +1,12 @@
+// Required imports based on Cairo Book
+use starknet::ContractAddress;
+use array::{Array, ArrayTrait};
+use box::BoxTrait;
+use traits::Into;
+use option::OptionTrait;
+
 #[starknet::interface]
-pub trait IGroupPayments<TContractState> {
+trait IGroupPayments<TContractState> {
     fn create_group(ref self: TContractState, group_name: felt252) -> u32;
     fn add_member_to_group(ref self: TContractState, group_id: u32, member: ContractAddress);
     fn add_payment(
@@ -25,11 +32,11 @@ pub trait IGroupPayments<TContractState> {
 
 #[starknet::contract]
 mod GroupPayments {
-    use core::starknet::ContractAddress;
-    use starknet::get_caller_address;
-    use array::ArrayTrait;
-    use option::OptionTrait;
-    use traits::Into;
+    use core::traits::Into;
+    use core::box::BoxTrait;
+    use starknet::{ContractAddress, get_caller_address};
+    use super::{Array, ArrayTrait};
+    use integer::{i256, u256_try_into_i256};
 
     #[event]
     #[derive(Drop, starknet::Event)]
@@ -90,12 +97,11 @@ mod GroupPayments {
             self.group_counter.write(group_id);
             self.group_name.write(group_id, group_name);
             
-            // Initialize empty arrays for the new group
-            let empty_members: Array<ContractAddress> = ArrayTrait::new();
-            self.members_array.write(group_id, empty_members);
+            let mut members: Array<ContractAddress> = ArrayTrait::new();
+            self.members_array.write(group_id, members);
             
-            let empty_settlements: Array<(ContractAddress, ContractAddress, u256)> = ArrayTrait::new();
-            self.settlements.write(group_id, empty_settlements);
+            let mut settlements: Array<(ContractAddress, ContractAddress, u256)> = ArrayTrait::new();
+            self.settlements.write(group_id, settlements);
 
             self.emit(GroupCreated { group_id, name: group_name });
             group_id
@@ -106,7 +112,7 @@ mod GroupPayments {
             assert(!self.group_members.read((group_id, member)), 'Member already exists');
 
             self.group_members.write((group_id, member), true);
-            self.member_balances.write((group_id, member), 0);
+            self.member_balances.write((group_id, member), 0_i256);
             
             let mut members = self.members_array.read(group_id);
             members.append(member);
@@ -127,39 +133,42 @@ mod GroupPayments {
             assert(amount > 0, 'Amount must be positive');
 
             let members = self.members_array.read(group_id);
-            let member_count = members.len();
+            let member_count: u256 = members.len().into();
             assert(member_count > 0, 'No members in group');
 
-            let share_per_member: u256 = amount / member_count.into();
+            let share_amount = amount / member_count;
+            let share_per_member = u256_try_into_i256(share_amount).unwrap();
 
-            // Update balances
             let mut i = 0;
             loop {
-                if i >= member_count {
+                if i >= members.len() {
                     break;
                 }
                 let member = *members.at(i);
                 if member != payer {
                     let current_balance = self.member_balances.read((group_id, member));
                     self.member_balances.write(
-                        (group_id, member), current_balance - share_per_member.into()
+                        (group_id, member), 
+                        current_balance - share_per_member
                     );
                 }
                 i += 1;
-            }
+            };
 
-            // Update payer's balance
             let payer_balance = self.member_balances.read((group_id, payer));
+            let total_shares = share_per_member * (member_count - 1).try_into().unwrap();
             self.member_balances.write(
                 (group_id, payer),
-                payer_balance + (amount - share_per_member).into()
+                payer_balance + total_shares
             );
 
             self.emit(PaymentAdded { group_id, payer, amount, description });
         }
 
         fn get_member_balance(
-            self: @ContractState, group_id: u32, member: ContractAddress
+            self: @ContractState,
+            group_id: u32,
+            member: ContractAddress
         ) -> i256 {
             self.member_balances.read((group_id, member))
         }
@@ -182,12 +191,11 @@ mod GroupPayments {
 
             let from_balance = self.member_balances.read((group_id, from));
             let to_balance = self.member_balances.read((group_id, to));
+            let amount_i256 = u256_try_into_i256(amount).unwrap();
 
-            // Update balances
-            self.member_balances.write((group_id, from), from_balance + amount.into());
-            self.member_balances.write((group_id, to), to_balance - amount.into());
+            self.member_balances.write((group_id, from), from_balance + amount_i256);
+            self.member_balances.write((group_id, to), to_balance - amount_i256);
 
-            // Record settlement
             let mut settlements = self.settlements.read(group_id);
             settlements.append((from, to, amount));
             self.settlements.write(group_id, settlements);
