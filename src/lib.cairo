@@ -1,4 +1,3 @@
-// Required imports based on Cairo Book
 use starknet::ContractAddress;
 use array::{Array, ArrayTrait};
 use box::BoxTrait;
